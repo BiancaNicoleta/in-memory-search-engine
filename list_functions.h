@@ -6,7 +6,7 @@
 #ifndef LIST_FUNCTIONS_H
 #define LIST_FUNCTIONS_H
 
-typedef struct FileInfo FileInfo;
+struct FileInfo;
 
 /**
  * @brief Node of generic doubly linked list.
@@ -40,6 +40,7 @@ void dll_free(dll_t **list);
  */
 typedef struct reference_node_t {
 	struct FileInfo *file;
+	int tf;
 	struct reference_node_t *next;
 } reference_node_t;
 
@@ -56,7 +57,7 @@ void ref_list_free_node(reference_node_t **node);
 reference_list_t *ref_list_create(void);
 void ref_list_add_nth_node(reference_list_t *list, unsigned int n, const void *new_data);
 reference_node_t *ref_list_remove_nth_node(reference_list_t *list, unsigned int n);
-reference_node_t *ref_list_check_node_exists(reference_list_t *list, FileInfo *file);
+reference_node_t *ref_list_check_node_exists(reference_list_t *list, struct FileInfo *file);
 void ref_list_free(reference_list_t **list);
 
 #endif /* LIST_FUNCTIONS_H */

@@ -15,7 +15,7 @@
 /**
  * @brief String comparison helper for qsort on arrays of string pointers.
  */
-static int cmp_str(const void *a, const void *b) {
+int cmp_str(const void *a, const void *b) {
 	return strcmp(*(const char **)a, *(const char **)b);
 }
 
@@ -66,6 +66,120 @@ void remove_file_from_ref_list(reference_list_t *list, const char *id) {
 		prev = curr;
 		curr = curr->next;
 	}
+}
+
+int add_document(System *sys, const char *id, int score, int kw_count, char **keywords) {
+	if (get_file_by_id(sys, id, NULL) != NULL) {
+		return 0;
+	}
+
+	FileInfo *new_file = (FileInfo *)malloc(sizeof(FileInfo));
+	DIE(!new_file, "malloc FileInfo");
+	new_file->id = (char *)malloc(strlen(id) + 1);
+	DIE(!new_file->id, "malloc id");
+	strcpy(new_file->id, id);
+	new_file->score = score;
+	new_file->keywords = dll_create(sizeof(char *));
+	dll_add_nth_node(sys->files, sys->files->size, new_file);
+	free(new_file);
+
+	dll_node_t *node = dll_get_nth_node(sys->files, sys->files->size - 1);
+	FileInfo *file = (FileInfo *)node->data;
+	for (int i = 0; i < kw_count; i++) {
+		if (!keywords[i]) {
+			continue;
+		}
+		if (get_keyword_index(file, keywords[i]) == -1) {
+			insert_key(sys->trie, keywords[i], file);
+
+			char *kw_copy = (char *)malloc(strlen(keywords[i]) + 1);
+			DIE(!kw_copy, "malloc kw_copy");
+			strcpy(kw_copy, keywords[i]);
+			dll_add_nth_node(file->keywords, file->keywords->size, &kw_copy);
+		}
+	}
+	return 1;
+}
+
+int delete_document(System *system, const char *id) {
+	int file_idx = -1;
+	FileInfo *file = get_file_by_id(system, id, &file_idx);
+	if (!file) {
+		return 0;
+	}
+
+	for (int i = (int)file->keywords->size - 1; i >= 0; i--) {
+		dll_node_t *kw_node = dll_get_nth_node(file->keywords, (unsigned int)i);
+		char *keyword = *(char **)kw_node->data;
+
+		trie_node_t *trie_node = search_key(system->trie, keyword);
+		if (trie_node && trie_node->ref_list) {
+			remove_file_from_ref_list(trie_node->ref_list, id);
+			if (!trie_node->ref_list->size) {
+				ref_list_free(&trie_node->ref_list);
+				delete_key(system->trie, system->trie->root, keyword);
+			}
+		}
+		free(keyword);
+	}
+	dll_free(&file->keywords);
+
+	free(file->id);
+	dll_node_t *removed = dll_remove_nth_node(system->files, (unsigned int)file_idx);
+	dll_free_node(&removed);
+	return 1;
+}
+
+int add_keyword_to_doc(System *system, const char *id, const char *keyword) {
+	FileInfo *file = get_file_by_id(system, id, NULL);
+	if (!file) {
+		return 0;
+	}
+
+	int kw_idx = get_keyword_index(file, keyword);
+	if (kw_idx == -1) {
+		insert_key(system->trie, (char *)keyword, file);
+
+		char *kw_copy = (char *)malloc(strlen(keyword) + 1);
+		DIE(!kw_copy, "malloc kw_copy");
+		strcpy(kw_copy, keyword);
+		dll_add_nth_node(file->keywords, file->keywords->size, &kw_copy);
+	}
+	return 1;
+}
+
+int delete_keyword_from_doc(System *system, const char *id, const char *keyword) {
+	int file_idx = -1;
+	FileInfo *file = get_file_by_id(system, id, &file_idx);
+	if (!file) {
+		return 0;
+	}
+
+	int kw_idx = get_keyword_index(file, keyword);
+	if (kw_idx == -1) {
+		return 1;
+	}
+
+	dll_node_t *removed_kw = dll_remove_nth_node(file->keywords, (unsigned int)kw_idx);
+	free(*(char **)removed_kw->data);
+	dll_free_node(&removed_kw);
+
+	trie_node_t *trie_node = search_key(system->trie, (char *)keyword);
+	if (trie_node && trie_node->ref_list) {
+		remove_file_from_ref_list(trie_node->ref_list, id);
+		if (!trie_node->ref_list->size) {
+			ref_list_free(&trie_node->ref_list);
+			delete_key(system->trie, system->trie->root, (char *)keyword);
+		}
+	}
+
+	if (!file->keywords->size) {
+		dll_free(&file->keywords);
+		free(file->id);
+		dll_node_t *removed = dll_remove_nth_node(system->files, (unsigned int)file_idx);
+		dll_free_node(&removed);
+	}
+	return 1;
 }
 
 void add(System *sys, FILE *fin, FILE *fout) {
@@ -125,37 +239,12 @@ void del(System *system, FILE *fin, FILE *fout) {
 		return;
 	}
 
-	int file_idx = -1;
-	FileInfo *file = get_file_by_id(system, id, &file_idx);
-
-	if (!file) {
+	if (delete_document(system, id)) {
+		fprintf(fout, "OK\n");
+	} else {
 		fprintf(fout, "NOT FOUND\n");
-		free(id);
-		return;
 	}
-
-	for (int i = (int)file->keywords->size - 1; i >= 0; i--) {
-		dll_node_t *kw_node = dll_get_nth_node(file->keywords, (unsigned int)i);
-		char *keyword = *(char **)kw_node->data;
-
-		trie_node_t *trie_node = search_key(system->trie, keyword);
-		if (trie_node && trie_node->ref_list) {
-			remove_file_from_ref_list(trie_node->ref_list, id);
-			if (!trie_node->ref_list->size) {
-				ref_list_free(&trie_node->ref_list);
-				delete_key(system->trie, system->trie->root, keyword);
-			}
-		}
-		free(keyword);
-	}
-	dll_free(&file->keywords);
-
-	free(file->id);
-	dll_node_t *removed = dll_remove_nth_node(system->files, (unsigned int)file_idx);
-	dll_free_node(&removed);
 	free(id);
-
-	fprintf(fout, "OK\n");
 }
 
 void addkw(System *system, FILE *fin, FILE *fout) {
@@ -167,24 +256,11 @@ void addkw(System *system, FILE *fin, FILE *fout) {
 		return;
 	}
 
-	FileInfo *file = get_file_by_id(system, id, NULL);
-	if (!file) {
+	if (add_keyword_to_doc(system, id, keyword_to_add)) {
+		fprintf(fout, "OK\n");
+	} else {
 		fprintf(fout, "NOT FOUND\n");
-		free(id);
-		free(keyword_to_add);
-		return;
 	}
-
-	int kw_idx = get_keyword_index(file, keyword_to_add);
-	if (kw_idx == -1) {
-		insert_key(system->trie, keyword_to_add, file);
-
-		char *kw_copy = (char *)malloc(strlen(keyword_to_add) + 1);
-		DIE(!kw_copy, "malloc kw_copy");
-		strcpy(kw_copy, keyword_to_add);
-		dll_add_nth_node(file->keywords, file->keywords->size, &kw_copy);
-	}
-	fprintf(fout, "OK\n");
 
 	free(keyword_to_add);
 	free(id);
@@ -199,44 +275,13 @@ void delkw(System *system, FILE *fin, FILE *fout) {
 		return;
 	}
 
-	int file_idx = -1;
-	FileInfo *file = get_file_by_id(system, id, &file_idx);
-	if (!file) {
+	if (get_file_by_id(system, id, NULL) == NULL) {
 		fprintf(fout, "NOT FOUND\n");
-		free(id);
-		free(keyword_to_delete);
-		return;
-	}
-
-	int kw_idx = get_keyword_index(file, keyword_to_delete);
-	if (kw_idx == -1) {
+	} else {
+		delete_keyword_from_doc(system, id, keyword_to_delete);
 		fprintf(fout, "OK\n");
-		free(id);
-		free(keyword_to_delete);
-		return;
 	}
 
-	dll_node_t *removed_kw = dll_remove_nth_node(file->keywords, (unsigned int)kw_idx);
-	free(*(char **)removed_kw->data);
-	dll_free_node(&removed_kw);
-
-	trie_node_t *trie_node = search_key(system->trie, keyword_to_delete);
-	if (trie_node && trie_node->ref_list) {
-		remove_file_from_ref_list(trie_node->ref_list, id);
-		if (!trie_node->ref_list->size) {
-			ref_list_free(&trie_node->ref_list);
-			delete_key(system->trie, system->trie->root, keyword_to_delete);
-		}
-	}
-
-	if (!file->keywords->size) {
-		dll_free(&file->keywords);
-		free(file->id);
-		dll_node_t *removed = dll_remove_nth_node(system->files, (unsigned int)file_idx);
-		dll_free_node(&removed);
-	}
-
-	fprintf(fout, "OK\n");
 	free(keyword_to_delete);
 	free(id);
 }
@@ -428,4 +473,141 @@ void prefix(System *system, FILE *fin, FILE *fout) {
 
 	free(prefix_str);
 	ref_list_free(&ref_list);
+}
+
+int get_term_frequency(System *system, const char *doc_id, const char *keyword) {
+	if (!system || !doc_id || !keyword) {
+		return 0;
+	}
+
+	trie_node_t *node = search_key(system->trie, (char *)keyword);
+	if (!node || !node->ref_list) {
+		return 0;
+	}
+
+	reference_node_t *curr = node->ref_list->head;
+	while (curr) {
+		if (strcmp(curr->file->id, doc_id) == 0) {
+			return curr->tf;
+		}
+		curr = curr->next;
+	}
+	return 0;
+}
+
+reference_list_t *search_boolean_and(System *system, char **keywords, int kw_count) {
+	if (!system || !keywords || kw_count <= 0) {
+		return ref_list_create();
+	}
+
+	trie_node_t **nodes = malloc(kw_count * sizeof(trie_node_t *));
+	DIE(!nodes, "malloc nodes");
+
+	for (int i = 0; i < kw_count; i++) {
+		nodes[i] = search_key(system->trie, keywords[i]);
+		if (!nodes[i] || !nodes[i]->ref_list || nodes[i]->ref_list->size == 0) {
+			free(nodes);
+			return ref_list_create();
+		}
+	}
+
+	reference_list_t *res = ref_list_create();
+	reference_node_t *candidate = nodes[0]->ref_list->head;
+
+	while (candidate) {
+		int matches_all = 1;
+		int total_tf = candidate->tf;
+
+		for (int i = 1; i < kw_count; i++) {
+			reference_node_t *matched = ref_list_check_node_exists(nodes[i]->ref_list, candidate->file);
+			if (!matched) {
+				matches_all = 0;
+				break;
+			}
+			total_tf += matched->tf;
+		}
+
+		if (matches_all) {
+			ref_list_add_nth_node(res, res->size, candidate->file);
+			reference_node_t *added = ref_list_check_node_exists(res, candidate->file);
+			if (added) {
+				added->tf = total_tf;
+			}
+		}
+
+		candidate = candidate->next;
+	}
+
+	free(nodes);
+	return res;
+}
+
+reference_list_t *search_boolean_or(System *system, char **keywords, int kw_count) {
+	reference_list_t *res = ref_list_create();
+	if (!system || !keywords || kw_count <= 0) {
+		return res;
+	}
+
+	for (int i = 0; i < kw_count; i++) {
+		trie_node_t *node = search_key(system->trie, keywords[i]);
+		if (!node || !node->ref_list) {
+			continue;
+		}
+
+		reference_node_t *curr = node->ref_list->head;
+		while (curr) {
+			reference_node_t *existing = ref_list_check_node_exists(res, curr->file);
+			if (existing) {
+				existing->tf += curr->tf;
+			} else {
+				ref_list_add_nth_node(res, res->size, curr->file);
+				reference_node_t *added = ref_list_check_node_exists(res, curr->file);
+				if (added) {
+					added->tf = curr->tf;
+				}
+			}
+			curr = curr->next;
+		}
+	}
+
+	return res;
+}
+
+static int cmp_search_results(const void *a, const void *b) {
+	const SearchResult *ra = (const SearchResult *)a;
+	const SearchResult *rb = (const SearchResult *)b;
+	if (ra->relevance_score != rb->relevance_score) {
+		return rb->relevance_score - ra->relevance_score;
+	}
+	return strcmp(ra->file->id, rb->file->id);
+}
+
+SearchResult *rank_results_by_tf(reference_list_t *list, int *out_count) {
+	if (!list || list->size == 0) {
+		if (out_count) {
+			*out_count = 0;
+		}
+		return NULL;
+	}
+
+	int n = (int)list->size;
+	SearchResult *results = malloc(n * sizeof(SearchResult));
+	DIE(!results, "malloc SearchResult");
+
+	reference_node_t *curr = list->head;
+	for (int i = 0; i < n; i++) {
+		results[i].file = curr->file;
+		results[i].base_score = curr->file->score;
+		results[i].total_tf = curr->tf;
+		/* Composite relevance score: Base score + (TF * 10) */
+		results[i].relevance_score = curr->file->score + (curr->tf * 10);
+		curr = curr->next;
+	}
+
+	qsort(results, n, sizeof(SearchResult), cmp_search_results);
+
+	if (out_count) {
+		*out_count = n;
+	}
+	return results;
 }

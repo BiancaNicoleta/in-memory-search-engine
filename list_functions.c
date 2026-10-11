@@ -183,6 +183,7 @@ void ref_list_add_nth_node(reference_list_t *list, unsigned int n,
 
 	reference_node_t *new_node = malloc(sizeof(reference_node_t));
 	new_node->file = (FileInfo*)new_data;
+	new_node->tf = 1;
 
 	if (n == 0) {
 		new_node->next = list->head;

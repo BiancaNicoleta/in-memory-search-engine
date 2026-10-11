@@ -62,7 +62,12 @@ void insert_key(trie_t *trie, char *key, void *value) {
 	if (curr->ref_list == NULL) {
 		curr->ref_list = ref_list_create();
 	}
-	ref_list_add_nth_node(curr->ref_list, curr->ref_list->size, value);
+	reference_node_t *existing = ref_list_check_node_exists(curr->ref_list, (FileInfo *)value);
+	if (existing) {
+		existing->tf++;
+	} else {
+		ref_list_add_nth_node(curr->ref_list, curr->ref_list->size, value);
+	}
 
 	if (curr->end_of_word == 0) {
 		curr->end_of_word = 1;
